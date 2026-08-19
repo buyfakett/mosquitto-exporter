@@ -46,9 +46,9 @@ var (
 
 func main() {
 	cmd := &cli.Command{
-		Name:    appName,
-		Version: versionString(),
+		Name: appName,
 		Authors: []any{
+			"buyfakett <work@tteam.icu>",
 			"Johan Ryberg <johan@securit.se>",
 			"Arturo Reuschenbach Puncernau <a.reuschenbach.puncernau@sap.com>",
 			"Fabian Ruff <fabian.ruff@sap.com>",
@@ -74,7 +74,7 @@ func runServer(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	log.Infof("Starting %s %s", appName, versionString())
+	log.Infof("Starting %s", appName)
 	log.Infof("Configured %d MQTT groups", len(config.Groups))
 
 	registry := prometheus.NewRegistry()
@@ -111,7 +111,7 @@ func runServer(ctx context.Context, cmd *cli.Command) error {
 
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.HandlerFor(registry, promhttp.HandlerOpts{}))
-	mux.HandleFunc("/", serveVersion)
+	mux.HandleFunc("/", serveIndex)
 
 	server := &http.Server{
 		Addr:              net.JoinHostPort("0.0.0.0", strconv.Itoa(config.Port)),

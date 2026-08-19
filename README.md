@@ -2,6 +2,10 @@
 
 Prometheus exporter for the [Mosquitto MQTT message broker](https://mosquitto.org/).
 
+Maintained by [buyfakett](https://github.com/buyfakett). This repository is
+forked from [jryberg/mosquitto-exporter](https://github.com/jryberg/mosquitto-exporter)
+and [sapcc/mosquitto-exporter](https://github.com/sapcc/mosquitto-exporter).
+
 ## Usage
 
 The command line accepts one optional application option. The binary contains
@@ -71,7 +75,7 @@ retrying.
 ```bash
 docker run --rm \
   -p 9234:9234 \
-  -v "$PWD/config.yaml:/etc/mosquitto-exporter/config.yaml:ro" \
-  jryberg/mosquitto-exporter:latest \
-  --config /etc/mosquitto-exporter/config.yaml
+  -v "$PWD/config.yaml:/config.yaml:ro" \
+  buyfakett/mosquitto-exporter:latest \
+  --config /config.yaml
 ```
