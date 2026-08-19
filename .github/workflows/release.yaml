@@ -28,11 +28,6 @@ jobs:
           token: ${{ secrets.RELEASE_TOKEN }}
       - run: git fetch --unshallow --quiet --tags --force
 
-      - name: Download and extract web dist
-        run: bash download_web.sh
-        env:
-          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
-
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
