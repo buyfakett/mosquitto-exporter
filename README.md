@@ -12,13 +12,12 @@ mosquitto-exporter --config /etc/mosquitto-exporter/config.yaml
 ```
 
 Running without `--config` monitors `tcp://127.0.0.1:1883` and listens on
-`0.0.0.0:9234`.
+port `9234`.
 
 See [config.example.yaml](config.example.yaml) for a complete example:
 
 ```yaml
-bind_address: "0.0.0.0:9234"
-reset_metrics: true
+port: 9234
 
 groups:
   - name: "production"
@@ -55,6 +54,9 @@ mosquitto_exporter_up{group="production"} 1
 The exporter subscribes to `$SYS/#`. The dashboard in
 [grafana/mosquitto-exporter.json](grafana/mosquitto-exporter.json) can be
 imported directly into Grafana and includes a group selector.
+
+When a broker connection drops, the exporter resets that group's metrics before
+retrying.
 
 ## Docker
 

@@ -5,8 +5,10 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -87,7 +89,7 @@ func runServer(ctx context.Context, cmd *cli.Command) error {
 
 	for _, group := range config.Groups {
 		group := group
-		go monitorGroup(ctx, group, config.shouldResetMetrics(), metrics, connected)
+		go monitorGroup(ctx, group, metrics, connected)
 	}
 
 	mux := http.NewServeMux()
@@ -95,7 +97,7 @@ func runServer(ctx context.Context, cmd *cli.Command) error {
 	mux.HandleFunc("/", serveVersion)
 
 	server := &http.Server{
-		Addr:              config.BindAddress,
+		Addr:              net.JoinHostPort("0.0.0.0", strconv.Itoa(config.Port)),
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
@@ -106,7 +108,7 @@ func runServer(ctx context.Context, cmd *cli.Command) error {
 		_ = server.Shutdown(shutdownCtx)
 	}()
 
-	log.Infof("Listening on %s...", config.BindAddress)
+	log.Infof("Listening on %s...", server.Addr)
 	err = server.ListenAndServe()
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
@@ -117,7 +119,6 @@ func runServer(ctx context.Context, cmd *cli.Command) error {
 func monitorGroup(
 	ctx context.Context,
 	group MQTTGroupConfig,
-	resetMetrics bool,
 	metrics *metricStore,
 	connected *prometheus.GaugeVec,
 ) {
@@ -137,12 +138,8 @@ func monitorGroup(
 		}
 	}, func(_ mqtt.Client, err error) {
 		connected.WithLabelValues(group.Name).Set(0)
-		if resetMetrics {
-			log.Warnf("Connection to MQTT group %q lost: %s, resetting group metrics", group.Name, err)
-			metrics.resetGroup(group.Name)
-			return
-		}
-		log.Warnf("Connection to MQTT group %q lost: %s", group.Name, err)
+		log.Warnf("Connection to MQTT group %q lost: %s, resetting group metrics", group.Name, err)
+		metrics.resetGroup(group.Name)
 	})
 	if err != nil {
 		log.Errorf("MQTT group %q is disabled: %s", group.Name, err)

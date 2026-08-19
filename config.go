@@ -10,15 +10,14 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const defaultBindAddress = "0.0.0.0:9234"
+const defaultPort = 9234
 
 //go:embed default.yaml
 var defaultConfigYAML []byte
 
 type Config struct {
-	BindAddress  string            `yaml:"bind_address"`
-	ResetMetrics *bool             `yaml:"reset_metrics"`
-	Groups       []MQTTGroupConfig `yaml:"groups"`
+	Port   int               `yaml:"port"`
+	Groups []MQTTGroupConfig `yaml:"groups"`
 }
 
 type MQTTGroupConfig struct {
@@ -53,8 +52,8 @@ func loadConfig(path string) (Config, error) {
 		return Config{}, fmt.Errorf("parse config %q: %w", path, err)
 	}
 
-	if config.BindAddress == "" {
-		config.BindAddress = defaultBindAddress
+	if config.Port == 0 {
+		config.Port = defaultPort
 	}
 	for index := range config.Groups {
 		group := &config.Groups[index]
@@ -65,6 +64,7 @@ func loadConfig(path string) (Config, error) {
 			group.Password = group.Pass
 		}
 	}
+
 	if err := validateConfig(config); err != nil {
 		return Config{}, err
 	}
@@ -126,6 +126,9 @@ func validateConfig(config Config) error {
 	if len(config.Groups) == 0 {
 		return errors.New("config must define at least one MQTT group")
 	}
+	if config.Port <= 0 || config.Port > 65535 {
+		return fmt.Errorf("port must be between 1 and 65535")
+	}
 
 	seen := make(map[string]struct{}, len(config.Groups))
 	for index, group := range config.Groups {
@@ -144,11 +147,4 @@ func validateConfig(config Config) error {
 		}
 	}
 	return nil
-}
-
-func (c Config) shouldResetMetrics() bool {
-	if c.ResetMetrics == nil {
-		return true
-	}
-	return *c.ResetMetrics
 }

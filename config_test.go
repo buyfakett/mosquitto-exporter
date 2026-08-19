@@ -10,7 +10,7 @@ import (
 func TestLoadConfig(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
 	configData := `
-reset_metrics: false
+port: 19234
 groups:
   - name: production
     endpoint: tcp://prod:1883
@@ -30,11 +30,8 @@ groups:
 		t.Fatal(err)
 	}
 
-	if config.BindAddress != defaultBindAddress {
-		t.Fatalf("BindAddress = %q, want %q", config.BindAddress, defaultBindAddress)
-	}
-	if config.shouldResetMetrics() {
-		t.Fatal("shouldResetMetrics() = true, want false")
+	if config.Port != 19234 {
+		t.Fatalf("Port = %d, want 19234", config.Port)
 	}
 	if len(config.Groups) != 2 {
 		t.Fatalf("len(Groups) = %d, want 2", len(config.Groups))
@@ -50,8 +47,8 @@ func TestLoadConfigUsesEmbeddedDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if config.BindAddress != "0.0.0.0:9234" {
-		t.Fatalf("BindAddress = %q, want 0.0.0.0:9234", config.BindAddress)
+	if config.Port != defaultPort {
+		t.Fatalf("Port = %d, want %d", config.Port, defaultPort)
 	}
 	if len(config.Groups) != 1 || config.Groups[0].Name != "default" {
 		t.Fatalf("embedded groups = %#v, want the default group", config.Groups)
@@ -61,7 +58,7 @@ func TestLoadConfigUsesEmbeddedDefault(t *testing.T) {
 func TestLoadConfigOverrideKeepsUnsetDefaults(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
 	if err := os.WriteFile(configPath, []byte(`
-bind_address: "127.0.0.1:19234"
+port: 19234
 `), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -70,8 +67,8 @@ bind_address: "127.0.0.1:19234"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.BindAddress != "127.0.0.1:19234" {
-		t.Fatalf("BindAddress = %q, want 127.0.0.1:19234", config.BindAddress)
+	if config.Port != 19234 {
+		t.Fatalf("Port = %d, want 19234", config.Port)
 	}
 	if len(config.Groups) != 1 || config.Groups[0].Endpoint != "tcp://127.0.0.1:1883" {
 		t.Fatalf("default groups were not retained: %#v", config.Groups)
@@ -93,5 +90,22 @@ groups:
 	_, err := loadConfig(configPath)
 	if err == nil || !strings.Contains(err.Error(), `duplicate MQTT group name "duplicate"`) {
 		t.Fatalf("loadConfig() error = %v, want duplicate group error", err)
+	}
+}
+
+func TestLoadConfigRejectsRemovedResetMetricsField(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configPath, []byte(`
+reset_metrics: true
+groups:
+  - name: default
+    endpoint: tcp://127.0.0.1:1883
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := loadConfig(configPath)
+	if err == nil || !strings.Contains(err.Error(), "field reset_metrics not found") {
+		t.Fatalf("loadConfig() error = %v, want unknown field error for reset_metrics", err)
 	}
 }
