@@ -40,6 +40,9 @@ groups:
 `groups` list replaces the embedded default list when supplied. Each group must
 have a unique `name`.
 
+If a group does not set `client_id`, the exporter generates one from the group
+name and process ID.
+
 ## Metrics
 
 Existing metric names are preserved. Metrics from different MQTT groups are

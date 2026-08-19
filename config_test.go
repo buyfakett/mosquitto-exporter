@@ -109,3 +109,10 @@ groups:
 		t.Fatalf("loadConfig() error = %v, want unknown field error for reset_metrics", err)
 	}
 }
+
+func TestDefaultClientID(t *testing.T) {
+	got := defaultClientID(MQTTGroupConfig{Name: "test group"})
+	if !strings.HasPrefix(got, appName+"-test-group-") {
+		t.Fatalf("defaultClientID() = %q, want prefix %q", got, appName+"-test-group-")
+	}
+}

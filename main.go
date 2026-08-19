@@ -183,6 +183,8 @@ func newClientOptions(
 
 	if group.ClientID != "" {
 		opts.SetClientID(group.ClientID)
+	} else {
+		opts.SetClientID(defaultClientID(group))
 	}
 	if group.Username != "" {
 		opts.SetUsername(group.Username)
@@ -232,4 +234,25 @@ func parseTopic(topic string) string {
 	name = strings.ReplaceAll(name, "-", "_")
 	name = strings.ReplaceAll(name, ".", "_")
 	return name
+}
+
+func defaultClientID(group MQTTGroupConfig) string {
+	return appName + "-" + sanitizeClientIDComponent(group.Name) + "-" + strconv.Itoa(os.Getpid())
+}
+
+func sanitizeClientIDComponent(value string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z':
+			return r
+		case r >= 'A' && r <= 'Z':
+			return r
+		case r >= '0' && r <= '9':
+			return r
+		case r == '-' || r == '_' || r == '.':
+			return r
+		default:
+			return '-'
+		}
+	}, value)
 }
