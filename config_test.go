@@ -115,4 +115,7 @@ func TestDefaultClientID(t *testing.T) {
 	if !strings.HasPrefix(got, appName+"-test-group-") {
 		t.Fatalf("defaultClientID() = %q, want prefix %q", got, appName+"-test-group-")
 	}
+	if strings.HasSuffix(got, "-test-group-") {
+		t.Fatalf("defaultClientID() = %q, want hostname and pid suffix", got)
+	}
 }

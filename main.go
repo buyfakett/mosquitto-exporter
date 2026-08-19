@@ -151,11 +151,11 @@ func monitorGroup(
 			metrics.processUpdate(group.Name, msg.Topic(), string(msg.Payload()))
 		})
 		if !token.WaitTimeout(10 * time.Second) {
-			log.Errorf("MQTT group %q timed out subscribing to topic $SYS/#", group.Name)
+			log.Warnf("MQTT group %q timed out subscribing to topic $SYS/#", group.Name)
 			return
 		}
 		if err := token.Error(); err != nil {
-			log.Errorf("MQTT group %q failed to subscribe to topic $SYS/#: %s", group.Name, err)
+			log.Warnf("MQTT group %q failed to subscribe to topic $SYS/#: %s", group.Name, err)
 			return
 		}
 		log.Infof("Subscribed MQTT group %q to topic $SYS/#", group.Name)
@@ -198,8 +198,9 @@ func newClientOptions(
 	onConnectionLost mqtt.ConnectionLostHandler,
 ) (*mqtt.ClientOptions, error) {
 	opts := mqtt.NewClientOptions()
-	opts.SetCleanSession(true)
+	opts.SetCleanSession(false)
 	opts.SetAutoReconnect(true)
+	opts.SetResumeSubs(true)
 	opts.AddBroker(group.Endpoint)
 	opts.OnConnect = onConnect
 	opts.OnConnectionLost = onConnectionLost
@@ -260,7 +261,11 @@ func parseTopic(topic string) string {
 }
 
 func defaultClientID(group MQTTGroupConfig) string {
-	return appName + "-" + sanitizeClientIDComponent(group.Name) + "-" + strconv.Itoa(os.Getpid())
+	hostname, err := os.Hostname()
+	if err != nil || hostname == "" {
+		hostname = "unknown-host"
+	}
+	return appName + "-" + sanitizeClientIDComponent(group.Name) + "-" + sanitizeClientIDComponent(hostname) + "-" + strconv.Itoa(os.Getpid())
 }
 
 func sanitizeClientIDComponent(value string) string {
