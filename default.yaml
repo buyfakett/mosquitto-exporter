@@ -1,0 +1,6 @@
+bind_address: "0.0.0.0:9234"
+reset_metrics: true
+
+groups:
+  - name: "default"
+    endpoint: "tcp://127.0.0.1:1883"

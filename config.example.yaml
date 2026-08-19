@@ -1,0 +1,17 @@
+bind_address: "0.0.0.0:9234"
+reset_metrics: true
+
+groups:
+  - name: "production"
+    endpoint: "tcp://mosquitto-prod:1883"
+    username: "exporter"
+    password: "change-me"
+    client_id: "mosquitto-exporter-production"
+
+  - name: "staging"
+    endpoint: "ssl://mosquitto-staging:8883"
+    username: "exporter"
+    password: "change-me"
+    cert: "/etc/mosquitto-exporter/client.crt"
+    key: "/etc/mosquitto-exporter/client.key"
+    client_id: "mosquitto-exporter-staging"

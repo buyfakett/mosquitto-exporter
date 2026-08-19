@@ -1,0 +1,9 @@
+groups:
+  - name: "test1"
+    endpoint: "tcp://121.46.234.135:1883"
+    user: "prod"
+    pass: "8BFgdjhWs6CgTM2T"
+  - name: "test2"
+    endpoint: "tcp://121.46.234.135:1884"
+    user: "prod"
+    pass: "8BFgdjhWs6CgTM2T"
