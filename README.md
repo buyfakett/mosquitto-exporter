@@ -46,17 +46,22 @@ name and process ID.
 ## Metrics
 
 Existing metric names are preserved. Metrics from different MQTT groups are
-distinguished with the `group` label:
+distinguished with the `name` label:
 
 ```text
-broker_clients_connected{group="production"} 12
-broker_clients_connected{group="staging"} 4
-mosquitto_exporter_up{group="production"} 1
+broker_clients_connected{name="production"} 12
+broker_clients_connected{name="staging"} 4
+mosquitto_exporter_up{name="production"} 1
+mosquitto_exporter_sys_messages_total{name="production"} 42
 ```
 
 The exporter subscribes to `$SYS/#`. The dashboard in
 [grafana/mosquitto-exporter.json](grafana/mosquitto-exporter.json) can be
-imported directly into Grafana and includes a group selector.
+imported directly into Grafana and includes a name selector.
+
+If `/metrics` only shows `mosquitto_exporter_up`, the exporter is connected but
+has not received broker `$SYS` messages yet. Check the broker's `$SYS` publishing
+interval and ACL permissions for `$SYS/#`.
 
 When a broker connection drops, the exporter resets that group's metrics before
 retrying.

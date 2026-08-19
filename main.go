@@ -82,14 +82,31 @@ func runServer(ctx context.Context, cmd *cli.Command) error {
 	connected := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "mosquitto_exporter_up",
 		Help: "Whether the exporter is connected to the MQTT broker.",
-	}, []string{"group"})
+	}, []string{"name"})
 	if err := registry.Register(connected); err != nil {
 		return fmt.Errorf("register exporter status metric: %w", err)
+	}
+	messageCount := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "mosquitto_exporter_sys_messages_total",
+		Help: "Total number of $SYS messages received from the MQTT broker.",
+	}, []string{"name"})
+	if err := registry.Register(messageCount); err != nil {
+		return fmt.Errorf("register exporter $SYS message counter: %w", err)
+	}
+	lastMessageTime := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "mosquitto_exporter_sys_last_message_timestamp_seconds",
+		Help: "Unix timestamp of the most recent $SYS message received from the MQTT broker.",
+	}, []string{"name"})
+	if err := registry.Register(lastMessageTime); err != nil {
+		return fmt.Errorf("register exporter $SYS last message metric: %w", err)
 	}
 
 	for _, group := range config.Groups {
 		group := group
-		go monitorGroup(ctx, group, metrics, connected)
+		connected.WithLabelValues(group.Name).Set(0)
+		messageCount.WithLabelValues(group.Name).Add(0)
+		lastMessageTime.WithLabelValues(group.Name).Set(0)
+		go monitorGroup(ctx, group, metrics, connected, messageCount, lastMessageTime)
 	}
 
 	mux := http.NewServeMux()
@@ -121,12 +138,16 @@ func monitorGroup(
 	group MQTTGroupConfig,
 	metrics *metricStore,
 	connected *prometheus.GaugeVec,
+	messageCount *prometheus.CounterVec,
+	lastMessageTime *prometheus.GaugeVec,
 ) {
 	opts, err := newClientOptions(group, func(client mqtt.Client) {
 		connected.WithLabelValues(group.Name).Set(1)
 		log.Infof("Connected to MQTT group %q at %s", group.Name, group.Endpoint)
 
 		token := client.Subscribe("$SYS/#", 0, func(_ mqtt.Client, msg mqtt.Message) {
+			messageCount.WithLabelValues(group.Name).Inc()
+			lastMessageTime.WithLabelValues(group.Name).Set(float64(time.Now().Unix()))
 			metrics.processUpdate(group.Name, msg.Topic(), string(msg.Payload()))
 		})
 		if !token.WaitTimeout(10 * time.Second) {
@@ -135,7 +156,9 @@ func monitorGroup(
 		}
 		if err := token.Error(); err != nil {
 			log.Errorf("MQTT group %q failed to subscribe to topic $SYS/#: %s", group.Name, err)
+			return
 		}
+		log.Infof("Subscribed MQTT group %q to topic $SYS/#", group.Name)
 	}, func(_ mqtt.Client, err error) {
 		connected.WithLabelValues(group.Name).Set(0)
 		log.Warnf("Connection to MQTT group %q lost: %s, resetting group metrics", group.Name, err)

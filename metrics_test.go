@@ -6,7 +6,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-func TestMetricStoreUsesGroupLabel(t *testing.T) {
+func TestMetricStoreUsesNameLabel(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	store := newMetricStore(registry)
 
@@ -30,10 +30,13 @@ func TestMetricStoreUsesGroupLabel(t *testing.T) {
 	}
 	values := make(map[string]float64)
 	for _, metric := range family.GetMetric() {
+		if metric.GetLabel()[0].GetName() != "name" {
+			t.Fatalf("metric label = %q, want name", metric.GetLabel()[0].GetName())
+		}
 		values[metric.GetLabel()[0].GetValue()] = metric.GetGauge().GetValue()
 	}
 	if values["production"] != 12 || values["staging"] != 4 {
-		t.Fatalf("group values = %#v, want production=12 and staging=4", values)
+		t.Fatalf("name values = %#v, want production=12 and staging=4", values)
 	}
 }
 
@@ -54,7 +57,7 @@ func TestMetricStoreResetsOnlyOneGroup(t *testing.T) {
 		values[metric.GetLabel()[0].GetValue()] = metric.GetCounter().GetValue()
 	}
 	if values["production"] != 0 || values["staging"] != 200 {
-		t.Fatalf("group values after reset = %#v, want production=0 and staging=200", values)
+		t.Fatalf("name values after reset = %#v, want production=0 and staging=200", values)
 	}
 }
 

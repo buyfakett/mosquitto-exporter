@@ -33,12 +33,12 @@ func newMetricStore(registerer prometheus.Registerer) *metricStore {
 	}
 }
 
-func (s *metricStore) processUpdate(group, topic, payload string) {
+func (s *metricStore) processUpdate(name, topic, payload string) {
 	if _, ignored := ignoreKeyMetrics[topic]; ignored {
 		return
 	}
 
-	name := parseTopic(topic)
+	metricName := parseTopic(topic)
 	metricType := prometheus.GaugeValue
 	if _, isCounter := counterKeyMetrics[topic]; isCounter {
 		metricType = prometheus.CounterValue
@@ -51,10 +51,10 @@ func (s *metricStore) processUpdate(group, topic, payload string) {
 	}
 
 	s.mu.Lock()
-	series, exists := s.metrics[name]
+	series, exists := s.metrics[metricName]
 	if !exists {
 		series = &metricSeries{
-			desc:       prometheus.NewDesc(name, topic, []string{"group"}, nil),
+			desc:       prometheus.NewDesc(metricName, topic, []string{"name"}, nil),
 			metricType: metricType,
 			values:     make(map[string]float64),
 		}
@@ -63,24 +63,24 @@ func (s *metricStore) processUpdate(group, topic, payload string) {
 				registered, ok := alreadyRegistered.ExistingCollector.(*metricSeries)
 				if !ok {
 					s.mu.Unlock()
-					log.Errorf("metric %s is already registered with an incompatible collector", name)
+					log.Errorf("metric %s is already registered with an incompatible collector", metricName)
 					return
 				}
 				series = registered
 			} else {
 				s.mu.Unlock()
-				log.Errorf("register metric %s: %s", name, err)
+				log.Errorf("register metric %s: %s", metricName, err)
 				return
 			}
 		}
-		s.metrics[name] = series
+		s.metrics[metricName] = series
 	}
 	s.mu.Unlock()
 
-	series.set(group, value)
+	series.set(name, value)
 }
 
-func (s *metricStore) resetGroup(group string) {
+func (s *metricStore) resetGroup(name string) {
 	s.mu.Lock()
 	series := make([]*metricSeries, 0, len(s.metrics))
 	for _, metric := range s.metrics {
@@ -89,20 +89,20 @@ func (s *metricStore) resetGroup(group string) {
 	s.mu.Unlock()
 
 	for _, metric := range series {
-		metric.reset(group)
+		metric.reset(name)
 	}
 }
 
-func (m *metricSeries) set(group string, value float64) {
+func (m *metricSeries) set(name string, value float64) {
 	m.mu.Lock()
-	m.values[group] = value
+	m.values[name] = value
 	m.mu.Unlock()
 }
 
-func (m *metricSeries) reset(group string) {
+func (m *metricSeries) reset(name string) {
 	m.mu.Lock()
-	if _, exists := m.values[group]; exists {
-		m.values[group] = 0
+	if _, exists := m.values[name]; exists {
+		m.values[name] = 0
 	}
 	m.mu.Unlock()
 }
@@ -113,19 +113,19 @@ func (m *metricSeries) Describe(ch chan<- *prometheus.Desc) {
 
 func (m *metricSeries) Collect(ch chan<- prometheus.Metric) {
 	m.mu.RLock()
-	groups := make([]string, 0, len(m.values))
-	for group := range m.values {
-		groups = append(groups, group)
+	names := make([]string, 0, len(m.values))
+	for name := range m.values {
+		names = append(names, name)
 	}
-	sort.Strings(groups)
+	sort.Strings(names)
 	values := make(map[string]float64, len(m.values))
-	for group, value := range m.values {
-		values[group] = value
+	for name, value := range m.values {
+		values[name] = value
 	}
 	m.mu.RUnlock()
 
-	for _, group := range groups {
-		ch <- prometheus.MustNewConstMetric(m.desc, m.metricType, values[group], group)
+	for _, name := range names {
+		ch <- prometheus.MustNewConstMetric(m.desc, m.metricType, values[name], name)
 	}
 }
 
