@@ -1,4 +1,4 @@
-module github.com/sapcc/mosquitto-exporter
+module github.com/buyfakett/mosquitto-exporter
 
 go 1.26.6
 
