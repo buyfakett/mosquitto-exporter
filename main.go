@@ -2,14 +2,15 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"errors"
+	"fmt"
+	"net"
 	"net/http"
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
-
-	"crypto/tls"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/prometheus/client_golang/prometheus"
@@ -18,9 +19,7 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-const (
-	appName = "mosquitto-exporter"
-)
+const appName = "mosquitto-exporter"
 
 var (
 	ignoreKeyMetrics = map[string]string{
@@ -40,18 +39,16 @@ var (
 		"$SYS/broker/publish/messages/sent":     "The total number of PUBLISH messages sent since the broker started.",
 		"$SYS/broker/publish/messages/dropped":  "The total number of PUBLISH messages that have been dropped due to inflight/queuing limits.",
 		"$SYS/broker/uptime":                    "The total number of seconds since the broker started.",
-		"$SYS/broker/clients/maximum":           "The maximum number of clients connected simultaneously since the broker started",
+		"$SYS/broker/clients/maximum":           "The maximum number of clients connected simultaneously since the broker started.",
 		"$SYS/broker/clients/total":             "The total number of clients connected since the broker started.",
 	}
-	counterMetrics = map[string]*MosquittoCounter{}
-	gaugeMetrics   = map[string]prometheus.Gauge{}
 )
 
 func main() {
 	cmd := &cli.Command{
-		Name:    appName,
-		Version: versionString(),
+		Name: appName,
 		Authors: []any{
+			"buyfakett <work@tteam.icu>",
 			"Johan Ryberg <johan@securit.se>",
 			"Arturo Reuschenbach Puncernau <a.reuschenbach.puncernau@sap.com>",
 			"Fabian Ruff <fabian.ruff@sap.com>",
@@ -60,246 +57,230 @@ func main() {
 		Action: runServer,
 		Flags: []cli.Flag{
 			&cli.StringFlag{
-				Name:    "endpoint",
-				Aliases: []string{"e"},
-				Usage:   "Endpoint for the Mosquitto message broker",
-				Sources: cli.EnvVars("BROKER_ENDPOINT"),
-				Value:   "tcp://127.0.0.1:1883",
-			},
-			&cli.StringFlag{
-				Name:    "bind-address",
-				Aliases: []string{"b"},
-				Usage:   "Listen address for metrics HTTP endpoint",
-				Value:   "0.0.0.0:9234",
-				Sources: cli.EnvVars("BIND_ADDRESS"),
-			},
-			&cli.StringFlag{
-				Name:    "user",
-				Aliases: []string{"u"},
-				Usage:   "Username for the Mosquitto message broker",
-				Value:   "",
-				Sources: cli.EnvVars("MQTT_USER"),
-			},
-			&cli.StringFlag{
-				Name:    "pass",
-				Aliases: []string{"p"},
-				Usage:   "Password for the User on the Mosquitto message broker",
-				Value:   "",
-				Sources: cli.EnvVars("MQTT_PASS"),
-			},
-			&cli.StringFlag{
-				Name:    "cert",
-				Aliases: []string{"c"},
-				Usage:   "Location of a TLS certificate .pem file for the Mosquitto message broker",
-				Value:   "",
-				Sources: cli.EnvVars("MQTT_CERT"),
-			},
-			&cli.StringFlag{
-				Name:    "key",
-				Aliases: []string{"k"},
-				Usage:   "Location of a TLS private key .pem file for the Mosquitto message broker",
-				Value:   "",
-				Sources: cli.EnvVars("MQTT_KEY"),
-			},
-			&cli.StringFlag{
-				Name:    "client-id",
-				Aliases: []string{"i"},
-				Usage:   "Client id to be used to connect to the Mosquitto message broker",
-				Value:   "",
-				Sources: cli.EnvVars("MQTT_CLIENT_ID"),
-			},
-			&cli.BoolFlag{
-				Name:    "reset-metrics",
-				Aliases: []string{"r"},
-				Usage:   "Reset metrics when loosing connection to broker",
-				Value:   true,
-				Sources: cli.EnvVars("RESET_METRICS"),
+				Name:  "config",
+				Usage: "Path to a YAML configuration file that overrides the embedded default",
 			},
 		},
 	}
 
-	cmd.Run(context.Background(), os.Args)
-}
-
-func resetMetrics() {
-	for topic := range counterMetrics {
-		if counterMetrics[topic] != nil {
-			counterMetrics[topic].Set(0)
-		}
-	}
-	for topic := range gaugeMetrics {
-		if gaugeMetrics[topic] != nil {
-			gaugeMetrics[topic].Set(0)
-		}
+	if err := cmd.Run(context.Background(), os.Args); err != nil {
+		log.Fatal(err)
 	}
 }
 
 func runServer(ctx context.Context, cmd *cli.Command) error {
-	log.Infof("Starting %s %s", appName, versionString())
-
-	opts := mqtt.NewClientOptions()
-	opts.SetCleanSession(true)
-	opts.AddBroker(cmd.String("endpoint"))
-
-	if cmd.String("client-id") != "" {
-		opts.SetClientID(cmd.String("client-id"))
+	config, err := loadConfig(cmd.String("config"))
+	if err != nil {
+		return err
 	}
 
-	// if you have a username you'll need a password with it
-	if cmd.String("user") != "" {
-		opts.SetUsername(cmd.String("user"))
-		if cmd.String("pass") != "" {
-			opts.SetPassword(cmd.String("pass"))
-		}
+	log.Infof("Starting %s", appName)
+	log.Infof("Configured %d MQTT groups", len(config.Groups))
+
+	registry := prometheus.NewRegistry()
+	metrics := newMetricStore(registry)
+	connected := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "mosquitto_exporter_up",
+		Help: "Whether the exporter is connected to the MQTT broker.",
+	}, []string{"name"})
+	if err := registry.Register(connected); err != nil {
+		return fmt.Errorf("register exporter status metric: %w", err)
 	}
-	// if you have a client certificate you want a key aswell
-	if cmd.String("cert") != "" && cmd.String("key") != "" {
-		keyPair, err := tls.LoadX509KeyPair(cmd.String("cert"), cmd.String("key"))
-		if err != nil {
-			log.Errorf("Failed to load certificate/keypair: %s", err)
-		}
-		tlsConfig := &tls.Config{
-			Certificates:       []tls.Certificate{keyPair},
-			InsecureSkipVerify: true,
-			ClientAuth:         tls.NoClientCert,
-		}
-		opts.SetTLSConfig(tlsConfig)
-		if !strings.HasPrefix(cmd.String("endpoint"), "ssl://") &&
-			!strings.HasPrefix(cmd.String("endpoint"), "tls://") {
-			log.Println("Warning: To use TLS the endpoint URL will have to begin with 'ssl://' or 'tls://'")
-		}
-	} else if (cmd.String("cert") != "" && cmd.String("key") == "") ||
-		(cmd.String("cert") == "" && cmd.String("key") != "") {
-		log.Println("Warning: For TLS to work both certificate and private key are needed. Skipping TLS.")
+	messageCount := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "mosquitto_exporter_sys_messages_total",
+		Help: "Total number of $SYS messages received from the MQTT broker.",
+	}, []string{"name"})
+	if err := registry.Register(messageCount); err != nil {
+		return fmt.Errorf("register exporter $SYS message counter: %w", err)
+	}
+	lastMessageTime := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "mosquitto_exporter_sys_last_message_timestamp_seconds",
+		Help: "Unix timestamp of the most recent $SYS message received from the MQTT broker.",
+	}, []string{"name"})
+	if err := registry.Register(lastMessageTime); err != nil {
+		return fmt.Errorf("register exporter $SYS last message metric: %w", err)
 	}
 
-	opts.OnConnect = func(client mqtt.Client) {
-		log.Infof("Connected to %s", cmd.String("endpoint"))
-		// subscribe on every (re)connect
+	for _, group := range config.Groups {
+		group := group
+		connected.WithLabelValues(group.Name).Set(0)
+		messageCount.WithLabelValues(group.Name).Add(0)
+		lastMessageTime.WithLabelValues(group.Name).Set(0)
+		go monitorGroup(ctx, group, metrics, connected, messageCount, lastMessageTime)
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", promhttp.HandlerFor(registry, promhttp.HandlerOpts{}))
+	mux.HandleFunc("/", serveIndex)
+
+	server := &http.Server{
+		Addr:              net.JoinHostPort("0.0.0.0", strconv.Itoa(config.Port)),
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = server.Shutdown(shutdownCtx)
+	}()
+
+	log.Infof("Listening on %s...", server.Addr)
+	err = server.ListenAndServe()
+	if errors.Is(err, http.ErrServerClosed) {
+		return nil
+	}
+	return err
+}
+
+func monitorGroup(
+	ctx context.Context,
+	group MQTTGroupConfig,
+	metrics *metricStore,
+	connected *prometheus.GaugeVec,
+	messageCount *prometheus.CounterVec,
+	lastMessageTime *prometheus.GaugeVec,
+) {
+	opts, err := newClientOptions(group, func(client mqtt.Client) {
+		connected.WithLabelValues(group.Name).Set(1)
+		log.Infof("Connected to MQTT group %q at %s", group.Name, group.Endpoint)
+
 		token := client.Subscribe("$SYS/#", 0, func(_ mqtt.Client, msg mqtt.Message) {
-			processUpdate(msg.Topic(), string(msg.Payload()))
+			messageCount.WithLabelValues(group.Name).Inc()
+			lastMessageTime.WithLabelValues(group.Name).Set(float64(time.Now().Unix()))
+			metrics.processUpdate(group.Name, msg.Topic(), string(msg.Payload()))
 		})
 		if !token.WaitTimeout(10 * time.Second) {
-			log.Println("Error: Timeout subscribing to topic $SYS/#")
+			log.Warnf("MQTT group %q timed out subscribing to topic $SYS/#", group.Name)
+			return
 		}
 		if err := token.Error(); err != nil {
-			log.Errorf("Failed to subscribe to topic $SYS/#: %s", err)
+			log.Warnf("MQTT group %q failed to subscribe to topic $SYS/#: %s", group.Name, err)
+			return
 		}
+		log.Infof("Subscribed MQTT group %q to topic $SYS/#", group.Name)
+	}, func(_ mqtt.Client, err error) {
+		connected.WithLabelValues(group.Name).Set(0)
+		log.Warnf("Connection to MQTT group %q lost: %s, resetting group metrics", group.Name, err)
+		metrics.resetGroup(group.Name)
+	})
+	if err != nil {
+		log.Errorf("MQTT group %q is disabled: %s", group.Name, err)
+		return
 	}
-	opts.OnConnectionLost = func(client mqtt.Client, err error) {
-		if cmd.Bool("reset-metrics") {
-			log.Warnf("Error: Connection to %s lost: %s, resetting counters", cmd.String("endpoint"), err)
-			resetMetrics()
-		} else {
-			log.Warnf("Error: Connection to %s lost: %s", cmd.String("endpoint"), err)
-		}
-	}
-	client := mqtt.NewClient(opts)
 
-	// try to connect forever
+	client := mqtt.NewClient(opts)
+	defer client.Disconnect(1000)
+
 	for {
 		token := client.Connect()
-		if token.WaitTimeout(5 * time.Second) {
-			if token.Error() == nil {
-				break
-			}
-			log.Errorf("Error: Failed to connect to broker: %s", token.Error())
-		} else {
-			log.Errorf("Timeout connecting to endpoint %s", cmd.String("endpoint"))
+		if token.WaitTimeout(5*time.Second) && token.Error() == nil {
+			break
 		}
-		time.Sleep(5 * time.Second)
-	}
-	log.Infof("Connected to %s", cmd.String("endpoint"))
 
-	// init the router and server
-	http.Handle("/metrics", promhttp.Handler())
-	http.HandleFunc("/", serveVersion)
-	log.Infof("Listening on %s...", cmd.String("bind-address"))
-	err := http.ListenAndServe(cmd.String("bind-address"), nil)
-	fatalfOnError(err, "Failed to bind on %s: ", cmd.String("bind-address"))
-	return nil
-}
-
-// $SYS/broker/bytes/received
-func processUpdate(topic, payload string) {
-	//log.Printf("Got broker update with topic %s and data %s", topic, payload)
-	if _, ok := ignoreKeyMetrics[topic]; !ok {
-		if _, ok := counterKeyMetrics[topic]; ok {
-			// log.Printf("Processing counter metric %s with data %s", topic, payload)
-			processCounterMetric(topic, payload)
+		connected.WithLabelValues(group.Name).Set(0)
+		if err := token.Error(); err != nil {
+			log.Errorf("MQTT group %q failed to connect: %s", group.Name, err)
 		} else {
-			//log.Printf("Processing gauge metric %s with data %s", topic, payload)
-			processGaugeMetric(topic, payload)
+			log.Errorf("MQTT group %q timed out connecting to %s", group.Name, group.Endpoint)
+		}
+		if !waitForRetry(ctx, 5*time.Second) {
+			return
 		}
 	}
+
+	<-ctx.Done()
 }
 
-func processCounterMetric(topic, payload string) {
-	if counterMetrics[topic] != nil {
-		value := parseValue(payload)
-		counterMetrics[topic].Set(value)
-	} else {
-		// create a mosquitto counter pointer
-		mCounter := NewMosquittoCounter(prometheus.NewDesc(
-			parseTopic(topic),
-			topic,
-			[]string{},
-			prometheus.Labels{},
-		))
+func newClientOptions(
+	group MQTTGroupConfig,
+	onConnect mqtt.OnConnectHandler,
+	onConnectionLost mqtt.ConnectionLostHandler,
+) (*mqtt.ClientOptions, error) {
+	opts := mqtt.NewClientOptions()
+	opts.SetCleanSession(false)
+	opts.SetAutoReconnect(true)
+	opts.SetResumeSubs(true)
+	opts.AddBroker(group.Endpoint)
+	opts.OnConnect = onConnect
+	opts.OnConnectionLost = onConnectionLost
 
-		// save it
-		counterMetrics[topic] = mCounter
-		// register the metric
-		prometheus.MustRegister(mCounter)
-		// add the first value
-		value := parseValue(payload)
-		counterMetrics[topic].Set(value)
+	if group.ClientID != "" {
+		opts.SetClientID(group.ClientID)
+	} else {
+		opts.SetClientID(defaultClientID(group))
 	}
+	if group.Username != "" {
+		opts.SetUsername(group.Username)
+		opts.SetPassword(group.Password)
+	}
+
+	if group.Cert == "" && group.Key == "" {
+		return opts, nil
+	}
+	if group.Cert == "" || group.Key == "" {
+		return nil, errors.New("both cert and key are required for TLS client authentication")
+	}
+
+	keyPair, err := tls.LoadX509KeyPair(group.Cert, group.Key)
+	if err != nil {
+		return nil, fmt.Errorf("load TLS certificate/keypair: %w", err)
+	}
+	opts.SetTLSConfig(&tls.Config{
+		Certificates:       []tls.Certificate{keyPair},
+		InsecureSkipVerify: true, // Keep compatibility with the previous CLI behaviour.
+		MinVersion:         tls.VersionTLS12,
+	})
+	if !strings.HasPrefix(group.Endpoint, "ssl://") &&
+		!strings.HasPrefix(group.Endpoint, "tls://") {
+		log.Warnf("MQTT group %q has a client certificate, but endpoint %q does not use ssl:// or tls://", group.Name, group.Endpoint)
+	}
+
+	return opts, nil
 }
 
-func processGaugeMetric(topic, payload string) {
-	if gaugeMetrics[topic] != nil {
-		value := parseValue(payload)
-		gaugeMetrics[topic].Set(value)
-	} else {
-		gaugeMetrics[topic] = prometheus.NewGauge(prometheus.GaugeOpts{
-			Name: parseTopic(topic),
-			Help: topic,
-		})
-		// register the metric
-		prometheus.MustRegister(gaugeMetrics[topic])
-		// add the first value
-		value := parseValue(payload)
-		gaugeMetrics[topic].Set(value)
+func waitForRetry(ctx context.Context, delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
 	}
 }
 
 func parseTopic(topic string) string {
 	name := strings.Replace(topic, "$SYS/", "", 1)
-	name = strings.Replace(name, "/", "_", -1)
-	name = strings.Replace(name, " ", "_", -1)
-	name = strings.Replace(name, "-", "_", -1)
-	name = strings.Replace(name, ".", "_", -1)
+	name = strings.ReplaceAll(name, "/", "_")
+	name = strings.ReplaceAll(name, " ", "_")
+	name = strings.ReplaceAll(name, "-", "_")
+	name = strings.ReplaceAll(name, ".", "_")
 	return name
 }
 
-func parseValue(payload string) float64 {
-	// fmt.Printf("Payload %s \n", payload)
-	var validValue = regexp.MustCompile(`-?\d{1,}[.]\d{1,}|\d{1,}`)
-	// get the first value of the string
-	strArray := validValue.FindAllString(payload, 1)
-	if len(strArray) > 0 {
-		// parse to float
-		value, err := strconv.ParseFloat(strArray[0], 64)
-		if err == nil {
-			return value
-		}
+func defaultClientID(group MQTTGroupConfig) string {
+	hostname, err := os.Hostname()
+	if err != nil || hostname == "" {
+		hostname = "unknown-host"
 	}
-	return 0
+	return appName + "-" + sanitizeClientIDComponent(group.Name) + "-" + sanitizeClientIDComponent(hostname) + "-" + strconv.Itoa(os.Getpid())
 }
 
-func fatalfOnError(err error, msg string, args ...interface{}) {
-	if err != nil {
-		log.Fatalf(msg, args...)
-	}
+func sanitizeClientIDComponent(value string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z':
+			return r
+		case r >= 'A' && r <= 'Z':
+			return r
+		case r >= '0' && r <= '9':
+			return r
+		case r == '-' || r == '_' || r == '.':
+			return r
+		default:
+			return '-'
+		}
+	}, value)
 }

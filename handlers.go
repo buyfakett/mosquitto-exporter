@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"net/http"
 )
 
@@ -9,17 +8,16 @@ import (
  * Root and Healthcheck
  */
 
-var landingPage = []byte(fmt.Sprintf(`<html>
+var landingPage = []byte(`<html>
 <head><title>Mosquitto exporter</title></head>
 <body>
 <h1>Mosquitto exporter</h1>
-<p>%s</p>
 <p><a href='/metrics'>Metrics</a></p>
 </body>
 </html>
-`, versionString()))
+`)
 
-func serveVersion(w http.ResponseWriter, r *http.Request) {
+func serveIndex(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write(landingPage)
 }

@@ -1,2 +1,3 @@
 bin/
-mosquitto-exporter
+mosquitto-exporter*
+config.yaml

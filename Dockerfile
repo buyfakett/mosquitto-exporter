@@ -1,7 +1,48 @@
-FROM       debian:trixie-slim
-LABEL      source_repository="https://github.com/jryberg/mosquitto-exporter"
-COPY       mosquitto-exporter /mosquitto_exporter
-RUN        apt update && \
-           apt install -y ca-certificates
-EXPOSE     9234
-ENTRYPOINT ["/mosquitto_exporter"]
+ARG ALPINE_VERSION=3.24
+ARG GO_VERSION=1.26.6
+ARG AUTHOR=buyfakett
+ARG SERVER_NAME=mosquitto-exporter
+
+# 支持多平台构建
+ARG TARGETPLATFORM
+ARG BUILDPLATFORM
+ARG TARGETOS
+ARG TARGETARCH
+ARG TARGETVARIANT
+
+# 后端
+FROM golang:${GO_VERSION}-alpine${ALPINE_VERSION} AS builder
+
+ARG ALPINE_VERSION
+ARG GO_VERSION
+ARG SERVER_NAME
+ARG TARGETOS
+ARG TARGETARCH
+
+WORKDIR /app
+
+COPY . .
+
+RUN go mod download
+
+# 根据平台推导出 GOOS 和 GOARCH
+RUN set -eux; \
+    TARGETOS=${TARGETOS:-linux}; \
+    TARGETARCH=${TARGETARCH:-amd64}; \
+    echo "Building for TARGETOS=${TARGETOS} TARGETARCH=${TARGETARCH}"; \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w" -o /app/${SERVER_NAME}
+
+# 最小编译
+FROM alpine:${ALPINE_VERSION} AS final
+
+ARG SERVER_NAME
+
+RUN apk add --no-cache tzdata
+
+ENV TERM=xterm-256color
+
+COPY --from=builder /app/${SERVER_NAME} /app/${SERVER_NAME}
+
+WORKDIR /app
+EXPOSE 9234
+ENTRYPOINT ["/app/mosquitto-exporter"]
